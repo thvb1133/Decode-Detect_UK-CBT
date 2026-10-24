@@ -9,6 +9,7 @@ from __future__ import annotations
 import shutil
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,44 +23,79 @@ def search_dirs() -> list[Path]:
     return [ROOT / "docs", home / "Downloads", home / "Desktop"]
 
 
-def collect_files() -> list[Path]:
+def _skip(path: Path) -> bool:
+    name = path.name.lower()
+    if "block" in name or ".part" in name:
+        return True
+    return any(part in {".git", "parts", "__pycache__", ".venv"} for part in path.parts)
+
+
+def collect_files() -> tuple[list[Path], list[Path]]:
     found = []
+    archives = []
     for folder in search_dirs():
         if not folder.is_dir():
             continue
-        for path in folder.glob("*"):
-            if not path.is_file():
+        for path in folder.rglob("*"):
+            if not path.is_file() or _skip(path):
                 continue
-            name = path.name.lower()
-            if path.suffix.lower() not in {".parquet", ".csv"}:
-                continue
-            if "block" in name or ".part" in name:
-                continue
-            found.append(path)
+            suffix = path.suffix.lower()
+            if suffix in {".parquet", ".csv"}:
+                found.append(path)
+            elif suffix == ".zip" and path.stat().st_size > 100_000:
+                archives.append(path)
     # Prefer a larger file when two downloads share a stem, so the training
     # copy is not overwritten by the smaller test copy.
     found.sort(key=lambda path: path.stat().st_size, reverse=True)
-    return found
+    return found, archives
+
+
+def _place(path: Path, docs: Path, used_names: set[str]) -> None:
+    target = docs / path.name
+    if target.name in used_names:
+        target = docs / f"{path.stem}_{path.stat().st_size}{path.suffix}"
+    used_names.add(target.name)
+    shutil.copy(path, target)
+
+
+def _extract_zip(archive: Path, docs: Path, used_names: set[str]) -> None:
+    try:
+        opened = zipfile.ZipFile(archive)
+    except zipfile.BadZipFile:
+        return
+    with opened:
+        for info in opened.infolist():
+            if info.is_dir():
+                continue
+            name = Path(info.filename).name
+            lower = name.lower()
+            if "block" in lower or not lower.endswith((".parquet", ".csv")):
+                continue
+            target = docs / f"{archive.stem}_{name}"
+            if target.name in used_names:
+                continue
+            used_names.add(target.name)
+            with opened.open(info) as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+            print(f"  unzipped {info.filename} from {archive.name}")
 
 
 def main() -> int:
-    files = collect_files()
+    files, archives = collect_files()
     print("files found:")
     for path in files:
         print(f"  {path}  ({path.stat().st_size:,} bytes)")
-    if not files:
+    if not files and not archives:
         raise SystemExit("No parquet or csv files were found in Downloads or docs.")
 
     with tempfile.TemporaryDirectory() as temporary:
         docs = Path(temporary) / "docs"
         docs.mkdir()
-        used_names = set()
+        used_names: set[str] = set()
         for path in files:
-            target = docs / path.name
-            if target.name in used_names:
-                target = docs / f"{path.stem}_{path.stat().st_size}{path.suffix}"
-            used_names.add(target.name)
-            shutil.copy(path, target)
+            _place(path, docs, used_names)
+        for archive in archives:
+            _extract_zip(archive, docs, used_names)
         destination = run(Path(temporary), fast=False)
 
     desktop = Path.home() / "Desktop" / "predictions.csv"
