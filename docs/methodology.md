@@ -178,3 +178,22 @@ windows used here.
   at run time, no external data.
 - `scripts/validate_submission.py` checks the output against every stated
   submission rule before upload.
+
+## 7. Negative result: multi-configuration blending
+
+`scripts/blend_runs.py` was run with a deep/permissive, a shallow/heavily-
+subsampled and a balanced LightGBM configuration. Measured out-of-fold at 5
+folds × 2 repeats:
+
+| Configuration | Out-of-fold AP |
+|---|---|
+| balanced | 0.8509 |
+| deep | 0.8422 |
+| shallow | 0.8317 |
+
+The weight search selected the balanced configuration alone, so the blend was
+rejected in favour of the single model and the submitted CSV comes from the
+3-repeat balanced run at AP 0.8526. The three configurations evidently make
+correlated errors on this feature space — the hard cases they miss are the
+same ones — so diversity in boosting hyperparameters buys nothing here.
+Remaining headroom is in the features, not in the ensemble.
