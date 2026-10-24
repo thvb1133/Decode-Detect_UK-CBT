@@ -1,0 +1,24 @@
+{
+  "oof_average_precision": 0.8508822328442119,
+  "leaderboard_equivalent_score": 85.08822328442119,
+  "single_model_average_precision": {
+    "deep": 0.8421664187146282,
+    "shallow": 0.8316550255431074,
+    "balanced": 0.8508822328442119
+  },
+  "blend_weights": {
+    "deep": 0.0,
+    "shallow": 0.0,
+    "balanced": 1.0
+  },
+  "top_1pct_precision": 0.9875311720698254,
+  "top_1pct_recall": 0.3168,
+  "top_1pct_k": 401,
+  "n_train": 40131,
+  "n_positive": 1250,
+  "n_test": 40101,
+  "n_features": 252,
+  "folds": 5,
+  "repeats": 2,
+  "seed": 20261024
+}
