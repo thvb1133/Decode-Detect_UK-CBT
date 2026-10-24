@@ -1,0 +1,14 @@
+# Competition data is distributed by the organisers and must not be committed:
+# the parquet files are far larger than GitHub's 100 MB hard limit.
+data/raw/
+data/interim/
+*.parquet
+
+# Generated feature tables; regenerate with src/graph_features.py.
+outputs/*.csv
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
