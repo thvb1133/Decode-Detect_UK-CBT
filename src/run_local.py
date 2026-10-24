@@ -111,16 +111,19 @@ def main() -> int:
             _place(path, docs, used_names, seen_sizes)
         for archive in archives:
             _extract_zip(archive, docs, used_names, seen_sizes)
+        print("training the models now. leave this window open.")
         destination = run(Path(temporary), fast=False, contest=True)
-
-    desktop = Path.home() / "Desktop" / "predictions.csv"
-    shutil.copy(destination, desktop)
-    local = ROOT / "submission" / "predictions.csv"
-    local.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(destination, local)
-    print(destination.read_text(encoding="utf-8").splitlines()[0])
-    print(f"predictions saved to {desktop}")
-    print(f"predictions saved to {local}")
+        # The temp folder is deleted when this block ends, so copy first.
+        desktop_dir = Path.home() / "Desktop"
+        desktop_dir.mkdir(parents=True, exist_ok=True)
+        desktop = desktop_dir / "predictions.csv"
+        local = ROOT / "submission" / "predictions.csv"
+        local.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(destination, desktop)
+        shutil.copy(destination, local)
+        print(destination.read_text(encoding="utf-8").splitlines()[0])
+        print(f"predictions saved to {desktop}")
+        print(f"predictions saved to {local}")
     return 0
 
 
