@@ -1,0 +1,14 @@
+# Datasets are never committed: organiser-provided and far over the ZIP limit.
+data_raw/
+data/raw/
+cache/
+*.parquet
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+
+submission/*.zip
