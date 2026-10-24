@@ -46,6 +46,8 @@ def _groups(columns: list[str]) -> dict[str, list[str]]:
     graph_tokens = (
         "degree", "cluster", "community", "cycle", "fan_", "scatter", "gather",
         "pagerank", "core_number", "clustering", "reciprocal", "edge_", "component",
+        "burst", "retention", "layer", "conduit", "hold", "exit_ratio", "fast_forward",
+        "collector", "distributor", "flow_",
     )
     behaviour_tokens = (
         "tx_count", "inflow", "outflow", "counterpart", "conversion_count",

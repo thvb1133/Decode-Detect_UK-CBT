@@ -25,6 +25,7 @@ if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
 from behaviour import build_behaviour_features  # noqa: E402
+from flow_features import build_flow_features  # noqa: E402
 from graph_features import features_from_frame  # noqa: E402
 from model import run_experiments  # noqa: E402
 from preprocess import build_tables  # noqa: E402
@@ -44,14 +45,19 @@ def run(root: Path, fast: bool = False) -> Path:
 
     graph = features_from_frame(edges[["TRANSACTION_HASH", "sender", "receiver", "amount"]])
     behaviour = build_behaviour_features(pd.concat([train, test], ignore_index=True))
+    flow = build_flow_features(edges)
     forbidden = {"label", "is_suspicious", "target", "pattern"}
-    leaked = forbidden & {column.lower() for column in list(graph.columns) + list(behaviour.columns)}
+    leaked = forbidden & {
+        column.lower() for column in list(graph.columns) + list(behaviour.columns) + list(flow.columns)
+    }
     if leaked:
         raise SystemExit(f"Label columns leaked into features: {sorted(leaked)}")
 
     def attach(frame: pd.DataFrame) -> pd.DataFrame:
-        return frame.merge(graph, on="TRANSACTION_HASH", how="left").merge(
-            behaviour, on="TRANSACTION_HASH", how="left"
+        return (
+            frame.merge(graph, on="TRANSACTION_HASH", how="left")
+            .merge(behaviour, on="TRANSACTION_HASH", how="left")
+            .merge(flow, on="TRANSACTION_HASH", how="left")
         )
 
     train_features = attach(train)
@@ -61,6 +67,7 @@ def run(root: Path, fast: bool = False) -> Path:
     _write(test.drop(columns=["label", "sender", "receiver"], errors="ignore"), processed / "test_clean.csv")
     _write(graph, processed / "graph_features.csv")
     _write(behaviour, processed / "behaviour_features.csv")
+    _write(flow, processed / "flow_features.csv")
     _write(train_features, processed / "train_features.csv")
     _write(test_features, processed / "test_features.csv")
 
