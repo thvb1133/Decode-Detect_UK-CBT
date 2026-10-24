@@ -242,15 +242,38 @@ def wallet_features(graph: nx.DiGraph) -> pd.DataFrame:
 
 
 def cycle_edges(graph: nx.DiGraph, max_length: int = 4) -> tuple[set, dict]:
-    """Edges that take part in a directed cycle of at most ``max_length`` hops."""
+    """Edges that take part in a directed cycle of at most ``max_length`` hops.
+
+    Exhaustive search is limited to modest graphs. On the full ledger a
+    2-cycle (A pays B and B pays A) is still marked, which is the round-trip
+    signal, without letting ``simple_cycles`` run for the whole contest window.
+    """
     on_cycle = set()
     node_cycle_count = defaultdict(int)
+    if graph.number_of_edges() > 20_000:
+        for sender, receiver in graph.edges():
+            if sender < receiver and graph.has_edge(receiver, sender):
+                on_cycle.add((sender, receiver))
+                on_cycle.add((receiver, sender))
+                node_cycle_count[sender] += 1
+                node_cycle_count[receiver] += 1
+        return on_cycle, node_cycle_count
     for cycle in nx.simple_cycles(graph, length_bound=max_length):
         for idx, node in enumerate(cycle):
             nxt = cycle[(idx + 1) % len(cycle)]
             on_cycle.add((node, nxt))
             node_cycle_count[node] += 1
     return on_cycle, node_cycle_count
+
+
+def features_from_frame(edges: pd.DataFrame, max_cycle_length: int = 4) -> pd.DataFrame:
+    """Build graph features from an edge frame that already has USD amounts."""
+    required = {"TRANSACTION_HASH", "sender", "receiver", "amount"}
+    missing = required - set(edges.columns)
+    if missing:
+        raise KeyError(f"edges frame is missing {sorted(missing)}")
+    graph = build_graph(edges)
+    return transaction_features(edges, graph, max_cycle_length)
 
 
 def transaction_features(
