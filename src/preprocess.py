@@ -39,7 +39,9 @@ TIME_CANDIDATES = ["CLOSE_TIME", "TIMESTAMP", "DATETIME", "TIME", "CLOSED_AT", "
 FEE_CANDIDATES = ["FEE", "FEE_DROPS", "TRANSACTION_FEE"]
 LEG_CANDIDATES = ["TRANSFER_INDEX", "LEG_INDEX", "TRANSFER_ID", "LEG", "INDEX"]
 LABEL_CANDIDATES = ["LABEL", "IS_SUSPICIOUS", "SUSPICIOUS", "TARGET", "Y"]
-RATE_CANDIDATES = ["USD_PRICE", "PRICE_USD", "RATE", "PRICE", "USD_RATE", "CLOSE"]
+RATE_CANDIDATES = [
+    "PRICE_MICRO_USD", "USD_PRICE", "PRICE_USD", "RATE", "PRICE", "USD_RATE", "CLOSE",
+]
 
 
 def find_raw_root(root: Path) -> Path:
@@ -156,14 +158,25 @@ def _rates_table(rates: pd.DataFrame) -> pd.DataFrame:
     price_col = _col(rates, RATE_CANDIDATES)
     symbol_col = _col(rates, SYMBOL_CANDIDATES)
     issuer_col = _col(rates, ISSUER_CANDIDATES)
+    asset_col = _col(rates, ["ASSET"])
     if time_col is None or price_col is None:
         return pd.DataFrame(columns=["hour", "symbol", "issuer", "usd_price"])
+    if asset_col and symbol_col is None:
+        asset = rates[asset_col].astype(str)
+        issuer = asset.str.split(":", n=1).str[0].where(asset.str.contains(":"), "")
+        symbol = asset.str.split(":", n=1).str[-1]
+    else:
+        issuer = rates[issuer_col].astype(str) if issuer_col else ""
+        symbol = rates[symbol_col].astype(str) if symbol_col else ""
+    price = pd.to_numeric(rates[price_col], errors="coerce")
+    if price_col.upper() == "PRICE_MICRO_USD":
+        price = price / 1_000_000
     out = pd.DataFrame(
         {
             "hour": _to_datetime(rates[time_col]).dt.floor("h"),
-            "symbol": rates[symbol_col].astype(str).str.upper() if symbol_col else "",
-            "issuer": rates[issuer_col].astype(str) if issuer_col else "",
-            "usd_price": pd.to_numeric(rates[price_col], errors="coerce"),
+            "symbol": pd.Series(symbol, index=rates.index).astype(str).str.upper(),
+            "issuer": pd.Series(issuer, index=rates.index).astype(str).replace({"nan": "", "None": ""}),
+            "usd_price": price,
         }
     )
     return out.dropna(subset=["hour", "usd_price"]).drop_duplicates(["hour", "symbol", "issuer"])

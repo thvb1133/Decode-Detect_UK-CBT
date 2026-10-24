@@ -77,6 +77,21 @@ def _write_split(folder: Path, start: int, count: int, label: bool) -> None:
         pd.DataFrame({"TRANSACTION_HASH": hashes, "LABEL": labels}).to_csv(folder / "labels.csv", index=False)
 
 
+def test_market_rates_micro_usd_are_scaled():
+    from preprocess import _rates_table
+
+    rates = pd.DataFrame(
+        {
+            "TIMESTAMP": [1789862400],
+            "ASSET": ["XRP"],
+            "PRICE_MICRO_USD": [648957],
+        }
+    )
+    priced = _rates_table(rates)
+    assert priced.loc[0, "symbol"] == "XRP"
+    assert abs(priced.loc[0, "usd_price"] - 0.648957) < 1e-9
+
+
 def test_pipeline_writes_a_valid_submission(tmp_path):
     _write_split(tmp_path / "data" / "raw" / "train", 0, 80, label=True)
     _write_split(tmp_path / "data" / "raw" / "test", 1000, 30, label=False)
