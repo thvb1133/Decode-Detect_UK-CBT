@@ -230,6 +230,8 @@ def build_edges(transfers: pd.DataFrame, when: pd.Series, rates: pd.DataFrame) -
     else:
         edges["dest_native"] = edges["native_amount"]
 
+    if isinstance(when, pd.Series) and when.index.has_duplicates:
+        when = when.groupby(level=0).first()
     edges["time"] = edges["TRANSACTION_HASH"].map(when)
     edges["hour"] = pd.to_datetime(edges["time"], utc=True, errors="coerce").dt.floor("h")
     priced = rates.rename(columns={"usd_price": "price"})
@@ -378,6 +380,11 @@ def build_from_folder(folder: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
         hashes = frame[resolve_column(frame, HASH_CANDIDATES, label="transaction hash")].astype(str)
         overlap = hashes.isin(label_hashes).mean()
         (train_tx if overlap > 0.5 else test_tx).append(frame)
+    if not train_tx:
+        raise SystemExit(
+            "The training transactions file is not here. The parquet files that were found "
+            "do not match labels.csv, so they are the test set."
+        )
     if not test_tx:
         raise SystemExit("Every transactions file matches the labels, so the test transactions are missing.")
     train_hashes = set(pd.concat(train_tx)[resolve_column(pd.concat(train_tx), HASH_CANDIDATES)].astype(str))
@@ -386,6 +393,8 @@ def build_from_folder(folder: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
         (train_tr if hashes.isin(train_hashes).mean() > 0.5 else test_tr).append(frame)
 
     def one_split(transactions, transfers, label_frame):
+        hash_col = resolve_column(transactions, HASH_CANDIDATES, label="transaction hash")
+        transactions = transactions.drop_duplicates(hash_col)
         preliminary = aggregate(transactions, pd.DataFrame(), blocks, pd.DataFrame())
         if preliminary["time"].isna().all() and not rates.empty:
             ledger_col = _col(transactions, LEDGER_CANDIDATES)
