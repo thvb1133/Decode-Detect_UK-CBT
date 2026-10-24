@@ -103,6 +103,8 @@ def test_flat_folder_splits_train_and_test_without_blocks(tmp_path):
     test_tx.to_parquet(docs / "transactions_test.parquet", index=False)
     transfers.to_parquet(docs / "transfers.parquet", index=False)
     labels.to_csv(docs / "labels (1).csv", index=False)
+    pd.concat([labels, labels], ignore_index=True).to_csv(docs / "labels_copy.csv", index=False)
+    train_tx.to_parquet(docs / "transactions_copy.parquet", index=False)
     rates.to_csv(docs / "market_rates.csv", index=False)
     train, test, edges = build_from_folder(docs)
     assert set(train["TRANSACTION_HASH"]) == {"a", "b"}

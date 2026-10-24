@@ -25,9 +25,16 @@ def search_dirs() -> list[Path]:
 
 def _skip(path: Path) -> bool:
     name = path.name.lower()
-    if "block" in name or ".part" in name:
+    if "block" in name or ".part" in name or "prediction" in name:
+        return True
+    if not any(token in name for token in ("transaction", "transfer", "label", "market_rate")):
         return True
     return any(part in {".git", "parts", "__pycache__", ".venv"} for part in path.parts)
+
+
+def _useful_zip(path: Path) -> bool:
+    name = path.name.lower()
+    return any(token in name for token in ("decode", "detect", "hackathon", "training-data", "test-data"))
 
 
 def collect_files() -> tuple[list[Path], list[Path]]:
@@ -42,7 +49,7 @@ def collect_files() -> tuple[list[Path], list[Path]]:
             suffix = path.suffix.lower()
             if suffix in {".parquet", ".csv"}:
                 found.append(path)
-            elif suffix == ".zip" and path.stat().st_size > 100_000:
+            elif suffix == ".zip" and path.stat().st_size > 100_000 and _useful_zip(path):
                 archives.append(path)
     # Prefer a larger file when two downloads share a stem, so the training
     # copy is not overwritten by the smaller test copy.
@@ -50,15 +57,19 @@ def collect_files() -> tuple[list[Path], list[Path]]:
     return found, archives
 
 
-def _place(path: Path, docs: Path, used_names: set[str]) -> None:
+def _place(path: Path, docs: Path, used_names: set[str], seen_sizes: set[int]) -> None:
+    size = path.stat().st_size
+    if size in seen_sizes:
+        return
+    seen_sizes.add(size)
     target = docs / path.name
     if target.name in used_names:
-        target = docs / f"{path.stem}_{path.stat().st_size}{path.suffix}"
+        target = docs / f"{path.stem}_{size}{path.suffix}"
     used_names.add(target.name)
     shutil.copy(path, target)
 
 
-def _extract_zip(archive: Path, docs: Path, used_names: set[str]) -> None:
+def _extract_zip(archive: Path, docs: Path, used_names: set[str], seen_sizes: set[int]) -> None:
     try:
         opened = zipfile.ZipFile(archive)
     except zipfile.BadZipFile:
@@ -69,8 +80,11 @@ def _extract_zip(archive: Path, docs: Path, used_names: set[str]) -> None:
                 continue
             name = Path(info.filename).name
             lower = name.lower()
-            if "block" in lower or not lower.endswith((".parquet", ".csv")):
+            if _skip(Path(name)) or not lower.endswith((".parquet", ".csv")):
                 continue
+            if info.file_size in seen_sizes:
+                continue
+            seen_sizes.add(info.file_size)
             target = docs / f"{archive.stem}_{name}"
             if target.name in used_names:
                 continue
@@ -92,11 +106,12 @@ def main() -> int:
         docs = Path(temporary) / "docs"
         docs.mkdir()
         used_names: set[str] = set()
+        seen_sizes: set[int] = set()
         for path in files:
-            _place(path, docs, used_names)
+            _place(path, docs, used_names, seen_sizes)
         for archive in archives:
-            _extract_zip(archive, docs, used_names)
-        destination = run(Path(temporary), fast=False)
+            _extract_zip(archive, docs, used_names, seen_sizes)
+        destination = run(Path(temporary), fast=False, contest=True)
 
     desktop = Path.home() / "Desktop" / "predictions.csv"
     shutil.copy(destination, desktop)

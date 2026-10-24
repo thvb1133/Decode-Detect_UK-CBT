@@ -37,7 +37,7 @@ def _write(frame: pd.DataFrame, path: Path) -> None:
     print(f"wrote {path}  ({len(frame):,} rows, {frame.shape[1]} columns)")
 
 
-def run(root: Path, fast: bool = False) -> Path:
+def run(root: Path, fast: bool = False, contest: bool = False) -> Path:
     train, test, edges = build_tables(root)
     print(f"train rows {len(train):,}   test rows {len(test):,}   transfer legs {len(edges):,}")
     if "label" not in train.columns or train["label"].isna().all():
@@ -71,7 +71,7 @@ def run(root: Path, fast: bool = False) -> Path:
     _write(train_features, processed / "train_features.csv")
     _write(test_features, processed / "test_features.csv")
 
-    scores, submission = run_experiments(train_features, test_features, fast=fast)
+    scores, submission = run_experiments(train_features, test_features, fast=fast, contest=contest)
     _write(scores, root / "submission" / "experiment_scores.csv")
     destination = root / "submission" / "predictions.csv"
     _write(submission, destination)

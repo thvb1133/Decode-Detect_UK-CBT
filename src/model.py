@@ -84,11 +84,11 @@ def _random_forest(fast: bool) -> RandomForestClassifier:
     )
 
 
-def _lightgbm(fast: bool, scale: float):
+def _lightgbm(fast: bool, scale: float, contest: bool = False):
     import lightgbm as lgb
 
     return lgb.LGBMClassifier(
-        n_estimators=40 if fast else 1200,
+        n_estimators=40 if fast else (500 if contest else 1200),
         learning_rate=0.08 if fast else 0.03,
         num_leaves=31,
         min_child_samples=20,
@@ -102,11 +102,11 @@ def _lightgbm(fast: bool, scale: float):
     )
 
 
-def _xgboost(fast: bool, scale: float):
+def _xgboost(fast: bool, scale: float, contest: bool = False):
     import xgboost as xgb
 
     return xgb.XGBClassifier(
-        n_estimators=40 if fast else 800,
+        n_estimators=40 if fast else (400 if contest else 800),
         learning_rate=0.08 if fast else 0.04,
         max_depth=5,
         min_child_weight=5,
@@ -129,7 +129,9 @@ def _fit_predict(model, x_fit, y_fit, x_valid, x_all=None):
     return valid_scores, full_scores
 
 
-def run_experiments(train: pd.DataFrame, test: pd.DataFrame, fast: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+def run_experiments(
+    train: pd.DataFrame, test: pd.DataFrame, fast: bool = False, contest: bool = False
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     columns = [column for column in feature_columns(train) if column in test.columns]
     groups = _groups(columns)
     y = train["label"].astype(int).to_numpy()
@@ -149,6 +151,10 @@ def run_experiments(train: pd.DataFrame, test: pd.DataFrame, fast: bool = False)
         ("8 LightGBM / all features", "lightgbm", "all"),
         ("9 XGBoost / all features", "xgboost", "all"),
     ]
+    if contest:
+        # The three runs that move average precision. Skipping the other six
+        # keeps a laptop finish inside the submission window.
+        specs = [item for item in specs if item[0].startswith(("4 ", "8 ", "9 "))]
     results: list[Result] = []
     fitted = []
     for name, kind, group in specs:
@@ -159,9 +165,9 @@ def run_experiments(train: pd.DataFrame, test: pd.DataFrame, fast: bool = False)
         if kind == "random_forest":
             model = _random_forest(fast)
         elif kind == "lightgbm":
-            model = _lightgbm(fast, scale)
+            model = _lightgbm(fast, scale, contest)
         else:
-            model = _xgboost(fast, scale)
+            model = _xgboost(fast, scale, contest)
         scores, _ = _fit_predict(model, x[fit_idx], y_fit, x[valid_idx])
         precision = float(average_precision_score(y_valid, scores)) if y_valid.sum() else float("nan")
         results.append(Result(name, kind, group, precision))
@@ -193,9 +199,9 @@ def run_experiments(train: pd.DataFrame, test: pd.DataFrame, fast: bool = False)
         if kind == "random_forest":
             model = _random_forest(fast)
         elif kind == "lightgbm":
-            model = _lightgbm(fast, scale)
+            model = _lightgbm(fast, scale, contest)
         else:
-            model = _xgboost(fast, scale)
+            model = _xgboost(fast, scale, contest)
         model.fit(x_train, y)
         score_columns.append(model.predict_proba(x_test)[:, 1])
         print(f"refit on all labelled rows: {name}")

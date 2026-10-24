@@ -16,6 +16,14 @@ import pandas as pd
 
 from graph_features import resolve_column
 
+
+def _as_lookup(values, index) -> pd.Series:
+    """A Series that ``map`` can use. Repeated keys keep the first value."""
+    series = pd.Series(np.asarray(values), index=pd.Index(index))
+    if series.index.has_duplicates:
+        series = series.groupby(level=0).first()
+    return series
+
 DROPS_PER_XRP = 1_000_000
 RIPPLE_EPOCH = 946_684_800  # 2000-01-01 UTC, the XRPL time origin
 
@@ -230,9 +238,7 @@ def build_edges(transfers: pd.DataFrame, when: pd.Series, rates: pd.DataFrame) -
     else:
         edges["dest_native"] = edges["native_amount"]
 
-    if isinstance(when, pd.Series) and when.index.has_duplicates:
-        when = when.groupby(level=0).first()
-    edges["time"] = edges["TRANSACTION_HASH"].map(when)
+    edges["time"] = edges["TRANSACTION_HASH"].map(_as_lookup(when.to_numpy(), when.index))
     edges["hour"] = pd.to_datetime(edges["time"], utc=True, errors="coerce").dt.floor("h")
     priced = rates.rename(columns={"usd_price": "price"})
     edges = edges.merge(priced, on=["hour", "symbol", "issuer"], how="left")
@@ -274,10 +280,7 @@ def aggregate(transactions: pd.DataFrame, edges: pd.DataFrame, blocks: pd.DataFr
         block_ledger = _col(blocks, LEDGER_CANDIDATES)
         block_time = _col(blocks, TIME_CANDIDATES)
         if block_ledger and block_time:
-            lookup = pd.Series(
-                _to_datetime(blocks[block_time]).to_numpy(),
-                index=blocks[block_ledger].to_numpy(),
-            )
+            lookup = _as_lookup(_to_datetime(blocks[block_time]).to_numpy(), blocks[block_ledger].to_numpy())
             out["time"] = transactions[ledger_col].map(lookup).to_numpy()
         else:
             out["time"] = pd.NaT
@@ -334,7 +337,10 @@ def aggregate(transactions: pd.DataFrame, edges: pd.DataFrame, blocks: pd.DataFr
     if not labels.empty:
         label_hash = resolve_column(labels, HASH_CANDIDATES, label="transaction hash")
         label_col = resolve_column(labels, LABEL_CANDIDATES, label="label")
-        label_map = pd.Series(pd.to_numeric(labels[label_col], errors="coerce").to_numpy(), index=labels[label_hash].astype(str))
+        label_map = _as_lookup(
+            pd.to_numeric(labels[label_col], errors="coerce").to_numpy(),
+            labels[label_hash].astype(str),
+        )
         out["label"] = out["TRANSACTION_HASH"].map(label_map)
     return out
 
@@ -370,9 +376,14 @@ def build_from_folder(folder: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
     if not buckets["transactions"] or not buckets["transfers"] or not buckets["labels"]:
         raise SystemExit(f"{folder} needs transactions, transfers, and labels. blocks.parquet is optional.")
 
+    def _largest(frames: list[pd.DataFrame]) -> pd.DataFrame:
+        return max(frames, key=len) if frames else pd.DataFrame()
+
     rates = _rates_table(pd.concat(buckets["rates"], ignore_index=True) if buckets["rates"] else pd.DataFrame())
     blocks = pd.concat(buckets["blocks"], ignore_index=True) if buckets["blocks"] else pd.DataFrame()
-    labels = pd.concat(buckets["labels"], ignore_index=True)
+    # Downloads contains many copies of the same file. One copy is enough, and
+    # stacking them gives duplicate transaction hashes that pandas cannot map.
+    labels = _largest(buckets["labels"])
     label_hashes = set(labels[resolve_column(labels, HASH_CANDIDATES, label="transaction hash")].astype(str))
 
     train_tx, test_tx, train_tr, test_tr = [], [], [], []
@@ -387,7 +398,9 @@ def build_from_folder(folder: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
         )
     if not test_tx:
         raise SystemExit("Every transactions file matches the labels, so the test transactions are missing.")
-    train_hashes = set(pd.concat(train_tx)[resolve_column(pd.concat(train_tx), HASH_CANDIDATES)].astype(str))
+    train_transactions = _largest(train_tx)
+    test_transactions = _largest(test_tx)
+    train_hashes = set(train_transactions[resolve_column(train_transactions, HASH_CANDIDATES)].astype(str))
     for frame in buckets["transfers"]:
         hashes = frame[resolve_column(frame, HASH_CANDIDATES, label="transaction hash")].astype(str)
         (train_tr if hashes.isin(train_hashes).mean() > 0.5 else test_tr).append(frame)
@@ -404,7 +417,7 @@ def build_from_folder(folder: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
                 span = (ledgers - ledgers.min()) / (ledgers.max() - ledgers.min() + 1e-9)
                 preliminary = preliminary.copy()
                 preliminary["time"] = start + (end - start) * span.to_numpy()
-        when = pd.Series(preliminary["time"].to_numpy(), index=preliminary["TRANSACTION_HASH"])
+        when = _as_lookup(preliminary["time"].to_numpy(), preliminary["TRANSACTION_HASH"])
         split_edges = build_edges(transfers, when, rates) if len(transfers) else pd.DataFrame()
         clean = aggregate(transactions, split_edges, blocks, label_frame)
         if clean["time"].isna().all():
@@ -413,8 +426,8 @@ def build_from_folder(folder: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
             clean["day_of_week"] = clean["time"].dt.day_of_week.fillna(0).astype(int)
         return clean, split_edges
 
-    train, train_edges = one_split(pd.concat(train_tx, ignore_index=True), pd.concat(train_tr, ignore_index=True) if train_tr else pd.DataFrame(), labels)
-    test, test_edges = one_split(pd.concat(test_tx, ignore_index=True), pd.concat(test_tr, ignore_index=True) if test_tr else pd.DataFrame(), pd.DataFrame())
+    train, train_edges = one_split(train_transactions, _largest(train_tr), labels)
+    test, test_edges = one_split(test_transactions, _largest(test_tr), pd.DataFrame())
     train["split"] = "train"
     test["split"] = "test"
     all_edges = pd.concat([train_edges, test_edges], ignore_index=True) if len(train_edges) or len(test_edges) else pd.DataFrame()
@@ -440,7 +453,7 @@ def build_tables(root: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
             rates = shared_rates
         # Time is attached after a first pass so transfer pricing can use it.
         preliminary = aggregate(tables["transactions"], pd.DataFrame(), tables["blocks"], pd.DataFrame())
-        when = pd.Series(preliminary["time"].to_numpy(), index=preliminary["TRANSACTION_HASH"])
+        when = _as_lookup(preliminary["time"].to_numpy(), preliminary["TRANSACTION_HASH"])
         split_edges = build_edges(tables["transfers"], when, rates)
         split_edges["split"] = split
         clean = aggregate(tables["transactions"], split_edges, tables["blocks"], tables["labels"])
