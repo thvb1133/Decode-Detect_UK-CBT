@@ -337,8 +337,86 @@ def aggregate(transactions: pd.DataFrame, edges: pd.DataFrame, blocks: pd.DataFr
     return out
 
 
+def _classify_frame(frame: pd.DataFrame) -> str:
+    columns = {column.upper() for column in frame.columns}
+    if "LABEL" in columns or "IS_SUSPICIOUS" in columns:
+        return "labels"
+    if "PRICE_MICRO_USD" in columns or "USD_PRICE" in columns:
+        return "rates"
+    if "SOURCE_VALUE" in columns or "DESTINATION" in columns and "ACCOUNT" in columns and "FEE" not in columns:
+        return "transfers"
+    if "FEE" in columns or "TRANSACTION_TYPE" in columns or "EXTRA_TRANSACTION_FIELDS" in columns:
+        return "transactions"
+    if "CLOSE_TIME" in columns and "TRANSACTION_HASH" not in columns:
+        return "blocks"
+    return "unknown"
+
+
+def build_from_folder(folder: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Use a flat folder of files when the train and test directories are not laid out."""
+    buckets: dict[str, list[pd.DataFrame]] = {"transactions": [], "transfers": [], "labels": [], "rates": [], "blocks": []}
+    for path in sorted(folder.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in {".parquet", ".csv"}:
+            continue
+        frame = _read(path)
+        if frame.empty:
+            continue
+        kind = _classify_frame(frame)
+        if kind in buckets:
+            buckets[kind].append(frame)
+            print(f"found {kind}: {path.name} ({len(frame):,} rows)")
+    if not buckets["transactions"] or not buckets["transfers"] or not buckets["labels"]:
+        raise SystemExit(f"{folder} needs transactions, transfers, and labels. blocks.parquet is optional.")
+
+    rates = _rates_table(pd.concat(buckets["rates"], ignore_index=True) if buckets["rates"] else pd.DataFrame())
+    blocks = pd.concat(buckets["blocks"], ignore_index=True) if buckets["blocks"] else pd.DataFrame()
+    labels = pd.concat(buckets["labels"], ignore_index=True)
+    label_hashes = set(labels[resolve_column(labels, HASH_CANDIDATES, label="transaction hash")].astype(str))
+
+    train_tx, test_tx, train_tr, test_tr = [], [], [], []
+    for frame in buckets["transactions"]:
+        hashes = frame[resolve_column(frame, HASH_CANDIDATES, label="transaction hash")].astype(str)
+        overlap = hashes.isin(label_hashes).mean()
+        (train_tx if overlap > 0.5 else test_tx).append(frame)
+    if not test_tx:
+        raise SystemExit("Every transactions file matches the labels, so the test transactions are missing.")
+    train_hashes = set(pd.concat(train_tx)[resolve_column(pd.concat(train_tx), HASH_CANDIDATES)].astype(str))
+    for frame in buckets["transfers"]:
+        hashes = frame[resolve_column(frame, HASH_CANDIDATES, label="transaction hash")].astype(str)
+        (train_tr if hashes.isin(train_hashes).mean() > 0.5 else test_tr).append(frame)
+
+    def one_split(transactions, transfers, label_frame):
+        preliminary = aggregate(transactions, pd.DataFrame(), blocks, pd.DataFrame())
+        if preliminary["time"].isna().all() and not rates.empty:
+            ledger_col = _col(transactions, LEDGER_CANDIDATES)
+            if ledger_col:
+                ledgers = pd.to_numeric(transactions[ledger_col], errors="coerce")
+                start, end = rates["hour"].min(), rates["hour"].max()
+                span = (ledgers - ledgers.min()) / (ledgers.max() - ledgers.min() + 1e-9)
+                preliminary = preliminary.copy()
+                preliminary["time"] = start + (end - start) * span.to_numpy()
+        when = pd.Series(preliminary["time"].to_numpy(), index=preliminary["TRANSACTION_HASH"])
+        split_edges = build_edges(transfers, when, rates) if len(transfers) else pd.DataFrame()
+        clean = aggregate(transactions, split_edges, blocks, label_frame)
+        if clean["time"].isna().all():
+            clean["time"] = pd.to_datetime(preliminary["time"], utc=True)
+            clean["hour_of_day"] = clean["time"].dt.hour.fillna(0).astype(int)
+            clean["day_of_week"] = clean["time"].dt.day_of_week.fillna(0).astype(int)
+        return clean, split_edges
+
+    train, train_edges = one_split(pd.concat(train_tx, ignore_index=True), pd.concat(train_tr, ignore_index=True) if train_tr else pd.DataFrame(), labels)
+    test, test_edges = one_split(pd.concat(test_tx, ignore_index=True), pd.concat(test_tr, ignore_index=True) if test_tr else pd.DataFrame(), pd.DataFrame())
+    train["split"] = "train"
+    test["split"] = "test"
+    all_edges = pd.concat([train_edges, test_edges], ignore_index=True) if len(train_edges) or len(test_edges) else pd.DataFrame()
+    return train, test, all_edges
+
+
 def build_tables(root: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return train rows, test rows, and the USD edge list for every split."""
+    docs = root / "docs"
+    if docs.is_dir() and any(docs.glob("*.parquet")):
+        return build_from_folder(docs)
     raw_root = find_raw_root(root)
     shared_rates = _rates_table(_read(_first_file(raw_root, {"market_rates.csv", "market_rates.parquet"})))
     frames = []

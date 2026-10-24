@@ -77,6 +77,41 @@ def _write_split(folder: Path, start: int, count: int, label: bool) -> None:
         pd.DataFrame({"TRANSACTION_HASH": hashes, "LABEL": labels}).to_csv(folder / "labels.csv", index=False)
 
 
+def test_flat_folder_splits_train_and_test_without_blocks(tmp_path):
+    from preprocess import build_from_folder
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    train_tx = pd.DataFrame(
+        {"TRANSACTION_HASH": ["a", "b"], "LEDGER_INDEX": [1, 2], "ACCOUNT": ["s", "s"], "FEE": [12, 12], "TRANSACTION_TYPE": ["Payment", "Payment"]}
+    )
+    test_tx = pd.DataFrame(
+        {"TRANSACTION_HASH": ["c"], "LEDGER_INDEX": [3], "ACCOUNT": ["s"], "FEE": [12], "TRANSACTION_TYPE": ["Payment"]}
+    )
+    transfers = pd.DataFrame(
+        {
+            "TRANSACTION_HASH": ["a", "b", "c"],
+            "ACCOUNT": ["s", "s", "s"],
+            "DESTINATION": ["r", "r", "r"],
+            "SOURCE_VALUE": [1_000_000, 2_000_000, 3_000_000],
+            "SYMBOL": ["XRP", "XRP", "XRP"],
+        }
+    )
+    labels = pd.DataFrame({"TRANSACTION_HASH": ["a", "b"], "LABEL": [0, 1]})
+    rates = pd.DataFrame({"TIMESTAMP": [1789862400, 1789866000], "ASSET": ["XRP", "XRP"], "PRICE_MICRO_USD": [500000, 500000]})
+    train_tx.to_parquet(docs / "transactions.parquet", index=False)
+    test_tx.to_parquet(docs / "transactions_test.parquet", index=False)
+    transfers.to_parquet(docs / "transfers.parquet", index=False)
+    labels.to_csv(docs / "labels (1).csv", index=False)
+    rates.to_csv(docs / "market_rates.csv", index=False)
+    train, test, edges = build_from_folder(docs)
+    assert set(train["TRANSACTION_HASH"]) == {"a", "b"}
+    assert set(test["TRANSACTION_HASH"]) == {"c"}
+    assert train["label"].notna().all()
+    assert "label" not in test.columns or test["label"].isna().all()
+    assert len(edges) == 3
+
+
 def test_market_rates_micro_usd_are_scaled():
     from preprocess import _rates_table
 
