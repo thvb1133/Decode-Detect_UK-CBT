@@ -1,11 +1,35 @@
 # Decode & Detect — Bath Bytes
 
-Suspicion scoring for the UK CBT *Decode & Detect* XRPL hackathon (24 October 2026).
-Score = 100 × Average Precision on 40,101 held-out test transactions.
+One command builds the clean tables, the graph features, the behaviour features,
+and the leaderboard file.
 
-This repository currently holds **Person 2's deliverable: wallet-graph features**.
+```bat
+pip install -r requirements.txt
+python src/run_all.py
+```
 
-## Quick start
+Put the organiser files here first:
+
+```
+data/raw/train/transactions.parquet
+data/raw/train/transfers.parquet
+data/raw/train/blocks.parquet
+data/raw/train/market_rates.csv
+data/raw/train/labels.csv
+data/raw/test/transactions.parquet
+data/raw/test/transfers.parquet
+data/raw/test/blocks.parquet
+data/raw/test/market_rates.csv
+```
+
+Upload `submission/predictions.csv` at hackathon.ukcbt.org. It is two columns,
+`TRANSACTION_HASH` and `score`, one row for every test transaction.
+
+## What the command writes
+
+Score = 100 × Average Precision on the 40,101 test transactions.
+
+## Graph-only quick start
 
 ```bash
 pip install -r requirements.txt
