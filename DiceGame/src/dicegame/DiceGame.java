@@ -2,6 +2,10 @@ package dicegame;
 
 import java.util.Random;
 
+// Beejalben Amitkumar Patel
+// M01035595
+// CST2110 Task 1
+
 // Starts the console game. An optional first argument is a dice seed,
 // used only to repeat the same throws while testing. Normal play omits it.
 public class DiceGame {
